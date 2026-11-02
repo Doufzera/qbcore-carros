@@ -51,7 +51,7 @@ jobs:
           fi
           git clone --quiet --depth 1 --filter=blob:none --sparse \
             https://github.com/PLOKMJNB/FiveM-Civ-Car-Pack.git upstream
-          git -C upstream sparse-checkout set --cone \
+          git -C upstream sparse-checkout set --cone --skip-checks \
             "PLOKS_CARS/data" "PLOKS_CARS/stream/[$BRAND]"
           test -d "upstream/PLOKS_CARS/data/[$BRAND]"
           test -d "upstream/PLOKS_CARS/stream/[$BRAND]"
