@@ -1,0 +1,98 @@
+name: "PLOKMJNB - criar lote de carros"
+
+on:
+  workflow_dispatch:
+    inputs:
+      brand:
+        description: "Fabricante do pack original (ex.: ACURA, BMW, TOYOTA)"
+        required: true
+        default: "ACURA"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ploks-brand-${{ inputs.brand }}
+  cancel-in-progress: false
+
+jobs:
+  gerar-zip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Verificar privacidade antes de obter arquivos de terceiros
+        env:
+          IS_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [[ "$IS_PRIVATE" != "true" ]]; then
+            echo "::error::O repositorio esta PUBLICO. Altere para PRIVATE antes de gerar ou publicar pacotes de terceiros."
+            exit 1
+          fi
+
+      - name: Baixar automacao deste repositorio
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Baixar apenas metadados e modelos do fabricante escolhido
+        env:
+          BRAND: ${{ inputs.brand }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$BRAND" =~ ^[A-Z0-9_]{2,24}$ ]]; then
+            echo "::error::Fabricante invalido. Use maiusculas, ex.: ACURA."
+            exit 1
+          fi
+          git clone --quiet --depth 1 --filter=blob:none --sparse \
+            https://github.com/PLOKMJNB/FiveM-Civ-Car-Pack.git upstream
+          git -C upstream sparse-checkout set --cone \
+            "PLOKS_CARS/data" "PLOKS_CARS/stream/[$BRAND]"
+          test -d "upstream/PLOKS_CARS/data/[$BRAND]"
+          test -d "upstream/PLOKS_CARS/stream/[$BRAND]"
+          echo "Commit original: $(git -C upstream rev-parse HEAD)"
+          du -sh "upstream/PLOKS_CARS/data" "upstream/PLOKS_CARS/stream/[$BRAND]"
+          df -h .
+
+      - name: Analisar duplicados e construir recursos FiveM
+        env:
+          BRAND: ${{ inputs.brand }}
+        run: |
+          set -euo pipefail
+          python tools/build_pack.py \
+            --source upstream/PLOKS_CARS \
+            --brand "$BRAND" \
+            --output dist
+
+      - name: Guardar ZIP e relatorios da execucao
+        uses: actions/upload-artifact@v4
+        with:
+          name: carros-${{ inputs.brand }}-auditoria
+          path: |
+            dist/*.zip
+            dist/*.csv
+            dist/*.txt
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Publicar ZIP na area Releases (teste)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRAND: ${{ inputs.brand }}
+        run: |
+          set -euo pipefail
+          brand_lower="$(printf '%s' "$BRAND" | tr '[:upper:]' '[:lower:]')"
+          tag="ploks-${brand_lower}-experimental"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --title "PLOKMJNB ${BRAND} - NAO VALIDADO NO FIVEM" \
+              --notes "Lote experimental: analise automatica e ZIP, sem alteracao dos modelos 3D. Validar em FXServer antes do uso em producao." \
+              --prerelease
+          fi
+          gh release upload "$tag" dist/*.zip dist/*.csv dist/*.txt --clobber
